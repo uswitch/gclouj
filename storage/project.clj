@@ -1,4 +1,4 @@
-(defproject gclouj/storage "0.2.6"
+(defproject uswitch/storage "0.2.6"
   :description "Google Cloud Storage"
   :url "https://github.com/pingles/gclouj"
   :license {:name "Eclipse Public License"
