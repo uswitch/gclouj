@@ -1,14 +1,8 @@
 # bigquery
 
-A Clojure library designed to ... well, that part is up to you.
+A Clojure library designed to lull you into a false sense of BigQuery being an operational database, and making you
+think you should actually be querying it from your Clojure app.
 
 ## Usage
 
-FIXME
-
-## License
-
-Copyright © 2016 Paul Ingles
-
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+Add it to your `project.clj` and pray.
