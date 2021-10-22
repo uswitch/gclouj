@@ -1,4 +1,4 @@
-(defproject uswitch/bigquery "0.3.0"
+(defproject uswitch/bigquery "1.0.0"
   :description "Google Cloud BigQuery"
   :url "https://github.com/uswitch/gclouj"
   :dependencies [[org.clojure/clojure "1.10.3"]

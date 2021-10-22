@@ -328,15 +328,6 @@
 
 (defmethod query-option :max-wait-millis [[_ val]] (BigQuery$QueryResultsOption/maxWaitTime val))
 
-(defn query-results
-  "Retrieves results for a Query job. Will throw exceptions unless Job
-  has completed successfully. Check using job and completed? functions."
-  [^BigQuery service {:keys [project-id job-id]} & opts]
-  {:pre [(string? job-id) (string? project-id)]}
-  (to-clojure (.getQueryResults service
-                                (JobId/of project-id job-id)
-                                (->> opts (map query-option) (into-array BigQuery$QueryResultsOption)))))
-
 (defn job [service {:keys [project-id job-id] :as job}]
   (to-clojure (.getJob service (JobId/of project-id job-id) (into-array BigQuery$JobOption []))))
 
