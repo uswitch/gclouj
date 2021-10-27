@@ -4,6 +4,8 @@
   :dependencies [[org.clojure/clojure "1.10.3"]
                  [com.google.cloud/google-cloud-bigquery "2.1.7"]
                  [com.google.cloud/google-cloud-bigquerystorage "2.4.2"]
+                 [org.apache.arrow/arrow-vector "6.0.0"]
+                 [org.apache.arrow/arrow-memory-netty "6.0.0"]
                  [clj-time "0.15.2"]]
   :source-paths ["src/clojure"]
   :java-source-paths ["src/java"]

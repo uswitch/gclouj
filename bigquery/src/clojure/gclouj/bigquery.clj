@@ -53,6 +53,7 @@
 
 (defmulti field-value->clojure (fn [attribute val]
                                  attribute))
+
 (defmethod field-value->clojure FieldValue$Attribute/PRIMITIVE [_ ^FieldValue val]
   (.getValue val))
 
@@ -228,7 +229,7 @@
                   [])]
     (.delete service
              ^DatasetId (DatasetId/of project-id dataset-id)
-             #^BigQuery$DatasetDeleteOption  (into-array BigQuery$DatasetDeleteOption options))))
+             #^BigQuery$DatasetDeleteOption (into-array BigQuery$DatasetDeleteOption options))))
 
 (defn- mkfield [{:keys [name type mode fields]}]
   (let [field-type (condp = type
@@ -285,6 +286,7 @@
   (if row-id
     (InsertAllRequest$RowToInsert/of (row-id row) (row-value row))
     (InsertAllRequest$RowToInsert/of (row-value row))))
+
 (defn insert-all
   "Performs a streaming insert of rows. row-id can be a function to
   return the unique identity of the row (e.g. row-hash). Template suffix
@@ -300,11 +302,6 @@
          (to-clojure))))
 
 (defn query
-  "Executes a query. BigQuery will create a Query Job and block for the
-  specified timeout. If the query returns within the time the results
-  will be returned. Otherwise, results need to be retrieved separately
-  using query-results. Status of the job can be checked using the job
-  function, and checking completed?"
   [^BigQuery service
    ^String query
    {:keys [max-results dry-run? max-wait-millis use-cache? use-legacy-sql? default-dataset] :as query-opts}]
@@ -444,26 +441,3 @@
     (when-not (nil? dry-run?)
       (.setDryRun builder dry-run?))
     (execute-job service (.build builder))))
-
-(comment
-  (def bigquery-service
-    (service
-      {:project-id "amp-compute"}))
-
-  (def transform-dataset
-    {:max-wait-millis (* 60 1000)
-     :default-dataset {:project-id "uswitch-ldn"
-                       :dataset-id "dbt_transform"}})
-
-  (def dbt-gold
-    {:max-wait-millis (* 60 1000)
-     :default-dataset {:project-id "uswitch-ldn"
-                       :dataset-id "dbt_gold"}})
-
-  (query bigquery-service
-         (str "#standardSQL\n"
-              "SELECT DISTINCT company_id, company_name "
-              "FROM companies_latest "
-              "ORDER BY company_name LIMIT 10")
-         dbt-gold)
-  )
