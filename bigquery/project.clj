@@ -6,6 +6,7 @@
                  [com.google.cloud/google-cloud-bigquerystorage "2.4.2"]
                  [org.apache.arrow/arrow-vector "6.0.0"]
                  [org.apache.arrow/arrow-memory-netty "6.0.0"]
+                 [org.clojure/core.async "1.3.618"]
                  [clj-time "0.15.2"]]
   :source-paths ["src/clojure"]
   :java-source-paths ["src/java"]
