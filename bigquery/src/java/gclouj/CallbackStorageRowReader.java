@@ -78,6 +78,7 @@ public class CallbackStorageRowReader implements AutoCloseable {
             for (int j = 0; j < fieldNames.size(); j++) {
                 row.put(fieldNames.get(j), root.getFieldVectors().get(j).getObject(i));
             }
+            System.out.println("processing a row");
             rowConsumer.accept(row);
         }
 
