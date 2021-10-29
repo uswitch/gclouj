@@ -15,6 +15,13 @@
            (java.util List Map)
            (java.util.function Consumer)))
 
+
+(Thread/setDefaultUncaughtExceptionHandler
+  (proxy [Thread$UncaughtExceptionHandler] []
+    (uncaughtException [thread ex]
+      (let [ex-message (str "Uncaught exception on" (.getName thread))]
+        (log/error ex ex-message)))))
+
 (defprotocol ToClojure
   (to-clojure [_]))
 
@@ -95,7 +102,11 @@
 (defn read-stream-async
   "TODO"
   [client schema stream]
-  (let [result-chan (a/chan per-stream-channel-buffer (map to-clojure))
+  (let [result-chan (a/chan
+                      (a/buffer per-stream-channel-buffer)
+                      (map to-clojure)
+                      (fn [ex]
+                        (log/error ex "some sort of excepshan")))
         stream-name (.getName stream)
         read-rows-request (make-read-rows-request stream-name)
         batches (.. client (readRowsCallable) (call read-rows-request))]
@@ -106,11 +117,11 @@
                    (when (not (.hasArrowRecordBatch batch))
                      (throw (ex-info "funny state detekt" {})))
 
-                   (log/info "parsing batch")
                    (let [rows (.getArrowRecordBatch batch)
                          batch-rows (.processRows reader rows)]
-                     (log/infof "putting %s on chan" (count batch-rows))
+                     (log/infof "putting %s on chan %s" (count batch-rows) stream-name)
                      (a/onto-chan! result-chan batch-rows false))))))
+      (log/infof "closing stream %s" stream-name)
       (a/close! result-chan))
     result-chan))
 
@@ -133,7 +144,8 @@
           stream-chans (mapv
                          (partial read-stream-async client schema)
                          streams)]
-      (a/merge stream-chans full-channel-buffer))))
+      #_(a/merge stream-chans (a/buffer full-channel-buffer))
+      stream-chans)))
 
 (defn read-data
   "TODO"
@@ -167,22 +179,13 @@
 
   (def client (open-client))
 
-  (read-data-async
-    client
-    "amp-compute"
-    "uswitch-ldn"
-    "dbt_gold"
-    "clicks"
-    {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"})
-
-
   (count (read-data
            client
            "amp-compute"
            "uswitch-ldn"
            "dbt_gold"
            "clicks"
-           {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
+           {:restrictions "customer_full_ref = 'money/unsecured-loans' AND DATE(click_timestamp) >= '2021-10-27'"}))
 
   (def re-cha (read-data-async
                 client
@@ -190,7 +193,10 @@
                 "uswitch-ldn"
                 "dbt_gold"
                 "clicks"
-                {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
+                {:restrictions "customer_full_ref = 'money/unsecured-loans' AND DATE(click_timestamp) >= '2021-10-27'"}))
+  (apply + (map
+             (comp count a/<!! #(a/into [] %))
+             re-cha))
 
   (count
     (a/<!!
