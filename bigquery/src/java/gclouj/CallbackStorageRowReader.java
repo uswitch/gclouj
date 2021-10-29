@@ -21,7 +21,6 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.Objects.requireNonNull;
 
 public class CallbackStorageRowReader implements AutoCloseable {
@@ -78,7 +77,6 @@ public class CallbackStorageRowReader implements AutoCloseable {
             for (int j = 0; j < fieldNames.size(); j++) {
                 row.put(fieldNames.get(j), root.getFieldVectors().get(j).getObject(i));
             }
-            System.out.println("processing a row");
             rowConsumer.accept(row);
         }
 

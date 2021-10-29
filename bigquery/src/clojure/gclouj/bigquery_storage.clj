@@ -1,5 +1,6 @@
 (ns gclouj.bigquery-storage
-  (:require [clojure.core.async :as a])
+  (:require [clojure.core.async :as a]
+            [clojure.tools.logging :as log])
   (:import (com.google.cloud.bigquery.storage.v1
              BigQueryReadClient
              ReadSession$TableReadOptions
@@ -11,7 +12,8 @@
            (gclouj StorageRowReader CallbackStorageRowReader)
            (clojure.lang ISeq Associative)
            (org.apache.arrow.vector.util Text)
-           (java.util List Map)))
+           (java.util List Map)
+           (java.util.function Consumer)))
 
 (defprotocol ToClojure
   (to-clojure [_]))
@@ -92,21 +94,25 @@
 
 (defn read-stream-async
   "TODO"
-  [client reader stream]
+  [client schema stream]
   (let [result-chan (a/chan per-stream-channel-buffer (map to-clojure))
         stream-name (.getName stream)
         read-rows-request (make-read-rows-request stream-name)
         batches (.. client (readRowsCallable) (call read-rows-request))]
     (a/go
-      (for [batch batches]
-        (do
-          (when (not (.hasArrowRecordBatch batch))
-            (throw (ex-info "funny state detekt" {})))
-          (let [rows (.getArrowRecordBatch batch)]
-            (.processRows reader rows
-                          (partial a/>! result-chan)))
-          (a/close! result-chan)))
-      result-chan)))
+      (with-open [reader (make-sync-arrow-reader schema)]
+        (doall (for [batch batches]
+                 (do
+                   (when (not (.hasArrowRecordBatch batch))
+                     (throw (ex-info "funny state detekt" {})))
+
+                   (log/info "parsing batch")
+                   (let [rows (.getArrowRecordBatch batch)
+                         batch-rows (.processRows reader rows)]
+                     (log/infof "putting %s on chan" (count batch-rows))
+                     (a/onto-chan! result-chan batch-rows false))))))
+      (a/close! result-chan))
+    result-chan))
 
 (defn read-data-async
   "TODO"
@@ -115,18 +121,19 @@
         table-options (make-table-options columns restrictions)
         session-builder (make-session-builder src-table table-options)
         read-session-req (make-session-request billing-project session-builder 0)
-        session (.createReadSession client read-session-req)]
+        session (.createReadSession client read-session-req)
+        schema (.getArrowSchema session)
+        stream-count (.getStreamsCount session)]
 
-    (with-open [reader (make-async-arrow-reader (.getArrowSchema session))]
+    (when (<= stream-count 0)
+      (throw (ex-info "failed to read from BigQuery" {})))
 
-      (when (<= (.getStreamsCount session) 0)
-        (throw (ex-info "failed to read from BigQuery" {})))
-
-      (let [streams (.getStreamsList session)
-            stream-chans (map
-                           (partial read-stream-async client reader)
-                           streams)]
-        (a/merge stream-chans full-channel-buffer)))))
+    (log/infof "Parsing %s streams of data" stream-count)
+    (let [streams (.getStreamsList session)
+          stream-chans (mapv
+                         (partial read-stream-async client schema)
+                         streams)]
+      (a/merge stream-chans full-channel-buffer))))
 
 (defn read-data
   "TODO"
@@ -152,20 +159,15 @@
                      (throw (ex-info "funny state detekt" {})))
                    (let [rows (.getArrowRecordBatch batch)]
                      (to-clojure (.processRows reader rows))))
-                 stream))))
-   ))
+                 stream))))))
 
 (comment
   ; TODO check actual correctness of all this data
-  (read-data
-    "amp-compute"
-    "uswitch-ldn"
-    "dbt_gold"
-    "clicks"
-    {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"})
+  (close-client client)
 
+  (def client (open-client))
 
-  (read-data
+  (read-data-async
     client
     "amp-compute"
     "uswitch-ldn"
@@ -173,37 +175,37 @@
     "clicks"
     {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"})
 
-  (close-client client)
 
-  (def client (open-client))
+  (count (read-data
+           client
+           "amp-compute"
+           "uswitch-ldn"
+           "dbt_gold"
+           "clicks"
+           {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
 
-  (a/into [] (read-data-async
-               client
-               "amp-compute"
-               "uswitch-ldn"
-               "dbt_gold"
-               "clicks"
-               {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
+  (def re-cha (read-data-async
+                client
+                "amp-compute"
+                "uswitch-ldn"
+                "dbt_gold"
+                "clicks"
+                {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
 
-  (def results (read-data-async
-                 client
-                 "amp-compute"
-                 "uswitch-ldn"
-                 "dbt_gold"
-                 "clicks"
-                 {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
+  (count
+    (a/<!!
+      (a/into
+        []
+        (read-data-async
+          client
+          "amp-compute"
+          "uswitch-ldn"
+          "dbt_gold"
+          "clicks"
+          {:restrictions "customer_full_ref = 'money/unsecured-loans' AND DATE(click_timestamp) >= '2021-10-27'"}))))
 
-  (a/go-loop
-    []
-    (let [results-chan (read-data-async
-                         client
-                         "amp-compute"
-                         "uswitch-ldn"
-                         "dbt_gold"
-                         "clicks"
-                         {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"})]
-      (a/into [] results-chan)))
+  (def f1 (a/<!! re-cha))
+
+  (a/<!! first-return)
 
   )
-
-
