@@ -1,4 +1,12 @@
 (ns gclouj.bigquery-storage
+  "Tools for querying BigQuery via the Storage API.
+
+  https://cloud.google.com/bigquery/docs/reference/storage
+
+  This is usually faster, cheaper, and allows for streaming.
+
+  The main restriction is only 1 table allowed and it has to be a physical table, because the
+  API reads the underlying storage directly."
   (:require [clojure.core.async :as a]
             [clojure.tools.logging :as log])
   (:import (com.google.cloud.bigquery.storage.v1
@@ -15,12 +23,8 @@
            (java.util List Map)
            (java.util.function Consumer)))
 
-
-(Thread/setDefaultUncaughtExceptionHandler
-  (proxy [Thread$UncaughtExceptionHandler] []
-    (uncaughtException [thread ex]
-      (let [ex-message (str "Uncaught exception on" (.getName thread))]
-        (log/error ex ex-message)))))
+(def per-stream-channel-buffer 500)
+(def full-channel-buffer 500)
 
 (defprotocol ToClojure
   (to-clojure [_]))
@@ -43,21 +47,20 @@
   Text (to-clojure [^Text x] (.toString x)))
 
 (defn open-client
-  "TODO"
+  "Constructs a Storage API client."
   []
   (BigQueryReadClient/create))
 
 (defn close-client
+  "Closes a given Storage API client."
   [client]
   (.close client))
 
 (defn- make-sync-arrow-reader
-  "TODO"
   [schema]
   (StorageRowReader. schema))
 
 (defn- make-async-arrow-reader
-  "TODO"
   [schema]
   (CallbackStorageRowReader. schema))
 
@@ -70,7 +73,6 @@
     (.build builder)))
 
 (defn- make-session-builder
-  "TODO"
   [src-table table-options]
   (.. ReadSession
       (newBuilder)
@@ -78,8 +80,7 @@
       (setDataFormat DataFormat/ARROW)
       (setReadOptions table-options)))
 
-(defn make-session-request
-  "TODO"
+(defn- make-session-request
   [billing-project session-builder max-stream-count]
   (.. CreateReadSessionRequest
       (newBuilder)
@@ -88,45 +89,49 @@
       (setMaxStreamCount max-stream-count)
       (build)))
 
-(defn make-read-rows-request
-  "TODO"
+(defn- make-read-rows-request
   [stream-name]
   (.. ReadRowsRequest
       (newBuilder)
       (setReadStream stream-name)
       (build)))
 
-(def per-stream-channel-buffer 50)
-(def full-channel-buffer 1000)
-
-(defn read-stream-async
-  "TODO"
+(defn- read-stream-async
   [client schema stream]
-  (let [result-chan (a/chan
-                      (a/buffer per-stream-channel-buffer)
-                      (map to-clojure)
-                      (fn [ex]
-                        (log/error ex "some sort of excepshan")))
-        stream-name (.getName stream)
+  (let [stream-name (.getName stream)
         read-rows-request (make-read-rows-request stream-name)
         batches (.. client (readRowsCallable) (call read-rows-request))]
-    (a/go
-      (with-open [reader (make-sync-arrow-reader schema)]
-        (doall (for [batch batches]
-                 (do
-                   (when (not (.hasArrowRecordBatch batch))
-                     (throw (ex-info "funny state detekt" {})))
-
-                   (let [rows (.getArrowRecordBatch batch)
-                         batch-rows (.processRows reader rows)]
-                     (log/infof "putting %s on chan %s" (count batch-rows) stream-name)
-                     (a/onto-chan! result-chan batch-rows false))))))
-      (log/infof "closing stream %s" stream-name)
-      (a/close! result-chan))
-    result-chan))
+    (with-open [reader (make-sync-arrow-reader schema)]
+      (let [batch-chans (map
+                          (fn [batch]
+                            (do
+                              (when (not (.hasArrowRecordBatch batch))
+                                (throw (ex-info "funny state detekt" {})))
+                              (let [rows (.getArrowRecordBatch batch)
+                                    batch-rows (.processRows reader rows)]
+                                (log/debugf "Returning %s items from %s" (count batch-rows) stream-name)
+                                (a/to-chan! batch-rows))))
+                          batches)]
+        (a/merge batch-chans per-stream-channel-buffer)))))
 
 (defn read-data-async
-  "TODO"
+  "Reads data from Bigquery Storage API asynchronously.
+
+  client: a Storage API client. Ensuring the client survives beyond all data being written out to the
+          result channel is the responsibility of the user.
+  billing-project: which project to bill your query against
+  data-project: project where data is located
+  dataset: dataset to query
+  table: table name
+  opts: hashmap of options
+    {
+      :columns - selector for returning only a subset of columns, default 'nil' for all columns
+      :restrictions - string for restrictions, in WHERE-clause syntax
+    }
+
+  Return is a core.async channel that will have hashmaps of your data. The resulting channel
+  will be closed when all your data is returned.
+  "
   [client billing-project data-project dataset table {:keys [columns restrictions]}]
   (let [src-table (format "projects/%s/datasets/%s/tables/%s" data-project dataset table)
         table-options (make-table-options columns restrictions)
@@ -141,14 +146,28 @@
 
     (log/infof "Parsing %s streams of data" stream-count)
     (let [streams (.getStreamsList session)
-          stream-chans (mapv
+          stream-chans (map
                          (partial read-stream-async client schema)
                          streams)]
-      #_(a/merge stream-chans (a/buffer full-channel-buffer))
-      stream-chans)))
+      (a/map to-clojure [(a/merge stream-chans full-channel-buffer)]))))
 
 (defn read-data
-  "TODO"
+  "Reads data from Bigquery Storage API synchronously.
+
+  client: a Storage API client. The overload that doesn't require it will make a client for you,
+          but for repeat querying it's advisable you construct and reuse one in your application.
+  billing-project: which project to bill your query against
+  data-project: project where data is located
+  dataset: dataset to query
+  table: table name
+  opts: hashmap of options
+    {
+      :columns - selector for returning only a subset of columns, default 'nil' for all columns
+      :restrictions - string for restrictions, in WHERE-clause syntax
+    }
+
+  Return is a vector of hashmaps with your data.
+  "
   ([billing-project data-project dataset table {:keys [columns restrictions] :as opts}]
    (with-open [client (open-client)]
      (read-data client billing-project data-project dataset table opts)))
@@ -174,18 +193,19 @@
                  stream))))))
 
 (comment
-  ; TODO check actual correctness of all this data
   (close-client client)
 
   (def client (open-client))
 
-  (count (read-data
-           client
-           "amp-compute"
-           "uswitch-ldn"
-           "dbt_gold"
-           "clicks"
-           {:restrictions "customer_full_ref = 'money/unsecured-loans' AND DATE(click_timestamp) >= '2021-10-27'"}))
+  (def data (read-data
+              client
+              "amp-compute"
+              "uswitch-ldn"
+              "dbt_gold"
+              "clicks"
+              {:restrictions "customer_full_ref = 'money/equity-release' AND DATE(click_timestamp) = '2021-10-27'"}))
+
+  (first data)
 
   (def re-cha (read-data-async
                 client
@@ -194,21 +214,12 @@
                 "dbt_gold"
                 "clicks"
                 {:restrictions "customer_full_ref = 'money/unsecured-loans' AND DATE(click_timestamp) >= '2021-10-27'"}))
-  (apply + (map
-             (comp count a/<!! #(a/into [] %))
-             re-cha))
-
   (count
     (a/<!!
       (a/into
         []
-        (read-data-async
-          client
-          "amp-compute"
-          "uswitch-ldn"
-          "dbt_gold"
-          "clicks"
-          {:restrictions "customer_full_ref = 'money/unsecured-loans' AND DATE(click_timestamp) >= '2021-10-27'"}))))
+        re-cha
+        )))
 
   (def f1 (a/<!! re-cha))
 

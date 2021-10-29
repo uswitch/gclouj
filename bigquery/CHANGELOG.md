@@ -7,3 +7,6 @@
 - possibly absolutely **everything** else bar `query`, there are no tests in this repo, and whilst I've done my best,
   Clojure is not even a compiled language, so I've no idea what I've trampled. Re-test your apps if you boop to 1.0+
   and use this lib to insert data or create tables or do anything else fun like that.
+
+# Non breaking
+- adds initial support for BigQuery Storage API querying

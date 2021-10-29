@@ -14,4 +14,5 @@
   :profiles {:dev {:global-vars {*warn-on-reflection* true}
                    :dependencies [[org.apache.logging.log4j/log4j-core "2.9.0"]
                                   [org.apache.logging.log4j/log4j-slf4j-impl "2.9.0"]]
+                   :resource-paths ["resources" "dev-resources"]
                    :jvm-opts ["-Dclojure.core.async.go-checking=true"]}})
